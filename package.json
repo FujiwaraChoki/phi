@@ -1,0 +1,23 @@
+{
+  "name": "phi",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "bun run src/index.tsx"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.69.0",
+    "@opentui/core": "^0.1.44",
+    "@opentui/react": "^0.1.44",
+    "@tavily/core": "^0.5.13",
+    "cli-spinners": "^3.3.0",
+    "react": "^19.2.0",
+    "zod": "^4.1.12"
+  }
+}
