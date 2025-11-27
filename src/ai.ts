@@ -11,11 +11,17 @@ const MODEL_TO_USE: Model = "claude-sonnet-4-5-20250929";
 // Use the tools from the centralized index (cast to any to avoid type incompatibility with beta tools)
 const tools = allTools as any;
 
+// Custom event types to expose tool execution to UI
+export type CustomStreamEvent =
+  | MessageStreamEvent
+  | { type: "tool_execution_start"; tool_use_id: string; tool_name: string }
+  | { type: "tool_execution_end"; tool_use_id: string; result: string; is_error: boolean };
+
 const streamResponse = async function* (
   authenticatedClient: Anthropic,
   prompt: string,
   chatId: string,
-): AsyncGenerator<MessageStreamEvent> {
+): AsyncGenerator<CustomStreamEvent> {
   let previousMessages: MessageParam[] = [];
 
   if (chatId) {
@@ -74,39 +80,72 @@ const streamResponse = async function* (
       content: finalMessage.content,
     });
 
-    // Execute all tools and collect results
-    const toolResultContents: ToolResultBlockParam[] = await Promise.all(
-      toolUses.map(async (toolUse): Promise<ToolResultBlockParam> => {
-        const toolFn = toolMap[toolUse.name];
+    // Execute all tools sequentially and collect results
+    const toolResultContents: ToolResultBlockParam[] = [];
+    for (const toolUse of toolUses) {
+      const toolFn = toolMap[toolUse.name];
 
-        if (!toolFn) {
-          return {
-            type: "tool_result" as const,
-            tool_use_id: toolUse.id,
-            content: `Error: Unknown tool ${toolUse.name}`,
-            is_error: true,
-          };
-        }
+      // Notify UI that tool execution is starting
+      yield {
+        type: "tool_execution_start" as const,
+        tool_use_id: toolUse.id,
+        tool_name: toolUse.name,
+      };
 
-        try {
-          const result = await toolFn(toolUse.input as any);
-          // Ensure result is a string
-          const content = typeof result === "string" ? result : JSON.stringify(result);
-          return {
-            type: "tool_result" as const,
-            tool_use_id: toolUse.id,
-            content,
-          };
-        } catch (error) {
-          return {
-            type: "tool_result" as const,
-            tool_use_id: toolUse.id,
-            content: `Error: ${(error as Error).message}`,
-            is_error: true,
-          };
-        }
-      })
-    );
+      if (!toolFn) {
+        const errorResult: ToolResultBlockParam = {
+          type: "tool_result" as const,
+          tool_use_id: toolUse.id,
+          content: `Error: Unknown tool ${toolUse.name}`,
+          is_error: true,
+        };
+
+        yield {
+          type: "tool_execution_end" as const,
+          tool_use_id: toolUse.id,
+          result: errorResult.content as string,
+          is_error: true,
+        };
+
+        toolResultContents.push(errorResult);
+        continue;
+      }
+
+      try {
+        const result = await toolFn(toolUse.input as any);
+        // Ensure result is a string
+        const content = typeof result === "string" ? result : JSON.stringify(result);
+
+        yield {
+          type: "tool_execution_end" as const,
+          tool_use_id: toolUse.id,
+          result: content,
+          is_error: false,
+        };
+
+        toolResultContents.push({
+          type: "tool_result" as const,
+          tool_use_id: toolUse.id,
+          content,
+        });
+      } catch (error) {
+        const errorContent = `Error: ${(error as Error).message}`;
+
+        yield {
+          type: "tool_execution_end" as const,
+          tool_use_id: toolUse.id,
+          result: errorContent,
+          is_error: true,
+        };
+
+        toolResultContents.push({
+          type: "tool_result" as const,
+          tool_use_id: toolUse.id,
+          content: errorContent,
+          is_error: true,
+        });
+      }
+    }
 
     const toolResults: MessageParam = {
       role: "user" as const,

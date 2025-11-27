@@ -5,7 +5,88 @@ import { Glob } from "bun";
 import type { Chat } from "../types";
 
 const HOME_DIR = homedir();
-const CHATS_DIR = `${HOME_DIR}/.phi/chats`;
+const PHI_DIR = `${HOME_DIR}/.phi`;
+const CHATS_DIR = `${PHI_DIR}/chats`;
+const CONFIG_FILE = `${PHI_DIR}/config.json`;
+
+type Config = {
+  anthropicToken?: string;
+  tavilyApiKey?: string;
+};
+
+/**
+ * Ensures the phi directory exists.
+ */
+export const ensurePhiDir = async () => {
+  try {
+    await mkdir(PHI_DIR, { recursive: true });
+  } catch {
+    // Directory already exists
+  }
+};
+
+/**
+ * Gets the config from ~/.phi/config.json
+ */
+export const getConfig = async (): Promise<Config> => {
+  await ensurePhiDir();
+  try {
+    const file = Bun.file(CONFIG_FILE);
+    if (await file.exists()) {
+      return JSON.parse(await file.text());
+    }
+  } catch {
+    // Config doesn't exist or is invalid
+  }
+  return {};
+};
+
+/**
+ * Saves the config to ~/.phi/config.json
+ */
+export const saveConfig = async (config: Config) => {
+  await ensurePhiDir();
+  await Bun.write(CONFIG_FILE, JSON.stringify(config, null, 2));
+};
+
+/**
+ * Gets the Anthropic token from config
+ */
+export const getToken = async (): Promise<string | undefined> => {
+  const config = await getConfig();
+  return config.anthropicToken;
+};
+
+/**
+ * Saves the Anthropic token to config
+ */
+export const saveToken = async (token: string) => {
+  const config = await getConfig();
+  config.anthropicToken = token;
+  await saveConfig(config);
+};
+
+/**
+ * Gets the Tavily API key from config
+ */
+export const getTavilyKey = async (): Promise<string | undefined> => {
+  // First check config
+  const config = await getConfig();
+  if (config.tavilyApiKey) {
+    return config.tavilyApiKey;
+  }
+  // Fall back to env var
+  return Bun.env.TAVILY_API_KEY;
+};
+
+/**
+ * Saves the Tavily API key to config
+ */
+export const saveTavilyKey = async (key: string) => {
+  const config = await getConfig();
+  config.tavilyApiKey = key;
+  await saveConfig(config);
+};
 
 /**
  * Ensures the chats directory exists.

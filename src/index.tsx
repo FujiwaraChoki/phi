@@ -1,164 +1,23 @@
 import { createCliRenderer } from "@opentui/core";
-import { createRoot, useKeyboard } from "@opentui/react";
+import { createRoot, useKeyboard, useTerminalDimensions } from "@opentui/react";
 import { getAsciiArt } from "./utils";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { check } from "./authentication";
 import Anthropic from "@anthropic-ai/sdk";
 import { streamResponse } from "./ai";
-import { saveChat, getPreviousChats, getChat, deleteChat, ensureChatsDir, initializeChat } from "./local-data";
+import { saveChat, getPreviousChats, getChat, deleteChat, ensureChatsDir, initializeChat, saveToken, saveTavilyKey, getTavilyKey } from "./local-data";
 import type { MessageParam } from "@anthropic-ai/sdk/resources";
 import type { SelectOption } from "@opentui/core";
-import type { ToolUseBlock } from "@anthropic-ai/sdk/resources/messages";
 import spinners from "cli-spinners";
-import { homedir } from "node:os";
+import { COLORS } from "./theme";
+import { UserMessage } from "./components/UserMessage";
+import { ContentBlockComponent } from "./components/ContentBlock";
+import type { Message, AssistantMessage as AssistantMsg, ContentBlock, TextContent, ToolCallContent } from "./types";
+import notifier from "node-notifier";
 
 const phiAsciiArt = await getAsciiArt("phi");
 
-// Tool icons for different operations
-const TOOL_ICONS: Record<string, string> = {
-  read_file: "📖",
-  write_file: "✏️",
-  edit_file: "🔧",
-  bash: "💻",
-  glob: "🔍",
-  grep: "🔎",
-  web_search: "🌐",
-  file_search: "📁",
-};
-
-// Abbreviate home directory in paths
-function abbreviatePath(filePath: string): string {
-  const home = homedir();
-  if (filePath.startsWith(home)) {
-    return "~" + filePath.slice(home.length);
-  }
-  return filePath;
-}
-
-// Get a display label for a tool invocation
-function getToolLabel(tool: ToolUseBlock): string {
-  const input = tool.input as Record<string, unknown>;
-  const icon = TOOL_ICONS[tool.name] || "🔧";
-
-  switch (tool.name) {
-    case "read_file":
-      return `${icon} Reading ${abbreviatePath(String(input.path || ""))}`;
-    case "write_file":
-      return `${icon} Writing ${abbreviatePath(String(input.path || ""))}`;
-    case "edit_file":
-      return `${icon} Editing ${abbreviatePath(String(input.path || ""))}`;
-    case "bash":
-      const cmd = String(input.command || "").slice(0, 50);
-      return `${icon} ${cmd}${String(input.command || "").length > 50 ? "..." : ""}`;
-    case "glob":
-      return `${icon} Finding ${String(input.pattern || "")}`;
-    case "grep":
-      return `${icon} Searching for "${String(input.pattern || "").slice(0, 30)}"`;
-    case "web_search":
-      return `${icon} Searching: ${String(input.query || "").slice(0, 40)}`;
-    default:
-      return `${icon} ${tool.name}`;
-  }
-}
-
 let client: Anthropic;
-
-// Simple markdown renderer for text component
-const MarkdownText = ({ content, showPrefix }: { content: string; showPrefix?: boolean }) => {
-  const lines = content.split("\n");
-
-  return (
-    <>
-      {lines.map((line, idx) => {
-        const prefix = showPrefix && idx === 0 ? (
-          <>
-            <span fg="#00ff88" bold>Phi</span>
-            {": "}
-          </>
-        ) : null;
-
-        // Headers
-        if (line.startsWith("### ")) {
-          return (
-            <text key={idx}>
-              {prefix}
-              <span fg="#00ff88" bold>{line.slice(4)}</span>
-            </text>
-          );
-        }
-        if (line.startsWith("## ")) {
-          return (
-            <text key={idx}>
-              {prefix}
-              <span fg="#00ff88" bold>{line.slice(3)}</span>
-            </text>
-          );
-        }
-        if (line.startsWith("# ")) {
-          return (
-            <text key={idx}>
-              {prefix}
-              <span fg="#00ff88" bold>{line.slice(2)}</span>
-            </text>
-          );
-        }
-
-        // Bold with ** or __
-        if (line.includes("**") || line.includes("__")) {
-          const parts = line.split(/(\*\*.*?\*\*|__.*?__)/g);
-          return (
-            <text key={idx}>
-              {prefix}
-              {parts.map((part, i) => {
-                if (part.startsWith("**") && part.endsWith("**")) {
-                  return <span key={i} bold>{part.slice(2, -2)}</span>;
-                }
-                if (part.startsWith("__") && part.endsWith("__")) {
-                  return <span key={i} bold>{part.slice(2, -2)}</span>;
-                }
-                return part;
-              })}
-            </text>
-          );
-        }
-
-        // List items
-        if (line.match(/^[-*]\s/)) {
-          return (
-            <text key={idx}>
-              {prefix}
-              <span fg="#FFA500">•</span> {line.slice(2)}
-            </text>
-          );
-        }
-
-        // Code blocks (inline)
-        if (line.includes("`")) {
-          const parts = line.split(/(`[^`]+`)/g);
-          return (
-            <text key={idx}>
-              {prefix}
-              {parts.map((part, i) => {
-                if (part.startsWith("`") && part.endsWith("`")) {
-                  return <span key={i} fg="#888888">{part.slice(1, -1)}</span>;
-                }
-                return part;
-              })}
-            </text>
-          );
-        }
-
-        // Regular line
-        return (
-          <text key={idx}>
-            {prefix}
-            {line || " "}
-          </text>
-        );
-      })}
-    </>
-  );
-};
 
 const LoadingSpinner = () => {
   const [frame, setFrame] = useState(0);
@@ -173,43 +32,82 @@ const LoadingSpinner = () => {
 
   return (
     <text>
-      <span fg="#00ff88" bold>
-        Phi
-      </span>
-      {": "}
-      <span fg="#FFA500">{spinner.frames[frame]}</span>
+      <span fg={COLORS.accent}>{spinner.frames[frame]}</span>
+      {" "}
+      <span fg={COLORS.muted}>Thinking...</span>
     </text>
   );
 };
 
-type MessageWithTools = {
-  message: MessageParam;
-  toolInvocations: ToolUseBlock[];
+// Status bar component
+const StatusBar = ({
+  isStreaming,
+  focusMode,
+  messageCount,
+}: {
+  isStreaming: boolean;
+  focusMode: "scroll" | "input";
+  messageCount: number;
+}) => {
+  const { width } = useTerminalDimensions();
+
+  const modeText = isStreaming ? "streaming..." : focusMode === "input" ? "input" : "scroll";
+  const helpText = "ESC: toggle focus • /new /load /delete";
+
+  return (
+    <box style={{
+      height: 1,
+      flexDirection: "row",
+      justifyContent: "space-between",
+      paddingLeft: 1,
+      paddingRight: 1,
+    }}>
+      <text>
+        <span fg={COLORS.muted}>[{modeText}]</span>
+        {" "}
+        <span fg={COLORS.dimmed}>{messageCount} messages</span>
+      </text>
+      <text>
+        <span fg={COLORS.muted}>{helpText}</span>
+      </text>
+    </box>
+  );
 };
 
 const App = () => {
   const [inputValue, setInputValue] = useState("");
-  const [messagesWithTools, setMessagesWithTools] = useState<MessageWithTools[]>([]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
-  const [streamingContent, setStreamingContent] = useState("");
-  const [chatId, setChatId] = useState(() => crypto.randomUUID());
+  const [streamingBlocks, setStreamingBlocks] = useState<ContentBlock[]>([]);
+  const [chatId, setChatId] = useState<string>(() => crypto.randomUUID());
   const [chatTitle, setChatTitle] = useState("");
   const [showSelector, setShowSelector] = useState(false);
   const [selectorMode, setSelectorMode] = useState<"load" | "delete" | null>(null);
   const [chatOptions, setChatOptions] = useState<SelectOption[]>([]);
-  const [currentToolInvocations, setCurrentToolInvocations] = useState<ToolUseBlock[]>([]);
-  const [currentToolUse, setCurrentToolUse] = useState<string>("");
   const [focusMode, setFocusMode] = useState<"scroll" | "input">("input");
+  const scrollRef = useRef<any>(null);
 
   // Initialize chat file on mount
   useEffect(() => {
     initializeChat(chatId);
   }, [chatId]);
 
+  // Auto-scroll during streaming
+  useEffect(() => {
+    if (isStreaming && scrollRef.current) {
+      // Scroll to bottom when streaming
+      scrollRef.current.scrollToBottom?.();
+    }
+  }, [isStreaming, streamingBlocks, messages]);
+
   // Handle keyboard for focus switching
   useKeyboard((key) => {
     if (key.name === "escape") {
-      if (focusMode === "input") {
+      if (showSelector) {
+        setShowSelector(false);
+        setSelectorMode(null);
+        setChatOptions([]);
+      } else if (focusMode === "input") {
         setFocusMode("scroll");
       } else {
         setFocusMode("input");
@@ -225,16 +123,14 @@ const App = () => {
       const command = value.toLowerCase().trim();
 
       if (command === "/new") {
-        // Start a new chat
         setChatId(crypto.randomUUID());
-        setMessagesWithTools([]);
+        setMessages([]);
         setChatTitle("");
         setInputValue("");
         return;
       }
 
       if (command === "/load") {
-        // Load chat selection
         const chats = await getPreviousChats();
         const options: SelectOption[] = [];
 
@@ -246,17 +142,17 @@ const App = () => {
               description: `${chat.messages.length} messages`,
               value: chatIdToLoad,
             });
-          } catch (error) {
+          } catch {
             // Skip invalid chats
           }
         }
 
         if (options.length === 0) {
-          setMessagesWithTools((prev) => [
+          setMessages((prev) => [
             ...prev,
             {
-              message: { role: "assistant", content: "No saved chats found." },
-              toolInvocations: [],
+              role: "assistant",
+              content: [{ type: "text", text: "No saved chats found." }],
             },
           ]);
           setInputValue("");
@@ -271,7 +167,6 @@ const App = () => {
       }
 
       if (command === "/delete") {
-        // Delete chat selection
         const chats = await getPreviousChats();
         const options: SelectOption[] = [];
 
@@ -283,17 +178,17 @@ const App = () => {
               description: `${chat.messages.length} messages`,
               value: chatIdToDelete,
             });
-          } catch (error) {
+          } catch {
             // Skip invalid chats
           }
         }
 
         if (options.length === 0) {
-          setMessagesWithTools((prev) => [
+          setMessages((prev) => [
             ...prev,
             {
-              message: { role: "assistant", content: "No saved chats found." },
-              toolInvocations: [],
+              role: "assistant",
+              content: [{ type: "text", text: "No saved chats found." }],
             },
           ]);
           setInputValue("");
@@ -308,14 +203,16 @@ const App = () => {
       }
 
       // Unknown command
-      setMessagesWithTools((prev) => [
+      setMessages((prev) => [
         ...prev,
         {
-          message: {
-            role: "assistant",
-            content: `Unknown command: ${value}\n\nAvailable commands:\n/new - Start a new chat\n/load - Load a saved chat\n/delete - Delete a saved chat`,
-          },
-          toolInvocations: [],
+          role: "assistant",
+          content: [
+            {
+              type: "text",
+              text: `Unknown command: ${value}\n\nAvailable commands:\n- /new - Start a new chat\n- /load - Load a saved chat\n- /delete - Delete a saved chat`,
+            },
+          ],
         },
       ]);
       setInputValue("");
@@ -323,113 +220,205 @@ const App = () => {
     }
 
     // Add user message
-    const userMessage: MessageParam = { role: "user", content: value };
-    setMessagesWithTools((prev) => [...prev, { message: userMessage, toolInvocations: [] }]);
+    const userMessage: Message = { role: "user", content: value };
+    setMessages((prev) => [...prev, userMessage]);
     setInputValue("");
     setIsStreaming(true);
-    setStreamingContent("");
-    setCurrentToolUse("");
-    setCurrentToolInvocations([]);
+    setStreamingBlocks([]);
 
     try {
-      let streamingText = "";
-      const toolInvocations: ToolUseBlock[] = [];
+      const contentBlocks: ContentBlock[] = [];
 
       for await (const event of streamResponse(client, value, chatId)) {
-        // Handle tool use blocks
-        if (event.type === "content_block_start" && event.content_block?.type === "tool_use") {
-          const toolBlock = event.content_block as ToolUseBlock;
-          toolInvocations.push(toolBlock);
-          setCurrentToolInvocations([...toolInvocations]);
+        // Handle content_block_start - blocks arrive in ORDER
+        if (event.type === "content_block_start") {
+          if (event.content_block?.type === "tool_use") {
+            const toolBlock: ToolCallContent = {
+              type: "tool_use",
+              id: event.content_block.id,
+              name: event.content_block.name,
+              input: {},
+              apiIndex: event.index, // Store API's index
+            };
+            contentBlocks.push(toolBlock);
+            setStreamingBlocks([...contentBlocks]);
+          } else if (event.content_block?.type === "text") {
+            const textBlock: TextContent = {
+              type: "text",
+              text: "",
+              apiIndex: event.index, // Store API's index
+            };
+            contentBlocks.push(textBlock);
+            setStreamingBlocks([...contentBlocks]);
+          }
         }
 
-        // Handle streaming text
-        if (event.type === "content_block_delta" && event.delta?.type === "text_delta") {
-          streamingText += event.delta.text;
-          setStreamingContent(streamingText);
+        // Handle content_block_delta - use findIndex to locate by apiIndex
+        if (event.type === "content_block_delta") {
+          if (event.delta?.type === "text_delta") {
+            const blockIndex = contentBlocks.findIndex((b) => b.apiIndex === event.index);
+            const block = contentBlocks[blockIndex] as TextContent | undefined;
+            if (block && block.type === "text") {
+              block.text += event.delta.text;
+              setStreamingBlocks([...contentBlocks]);
+            }
+          } else if (event.delta?.type === "input_json_delta") {
+            const blockIndex = contentBlocks.findIndex((b) => b.apiIndex === event.index);
+            const block = contentBlocks[blockIndex] as ToolCallContent | undefined;
+            if (block && block.type === "tool_use") {
+              // Parse the partial JSON directly (it's cumulative, not a delta)
+              try {
+                block.input = JSON.parse(event.delta.partial_json);
+              } catch {
+                // Partial JSON, will complete later
+              }
+              setStreamingBlocks([...contentBlocks]);
+            }
+          }
         }
 
-        // Handle message_stop - indicates the end of streaming
+        // Handle tool execution start
+        if (event.type === "tool_execution_start") {
+          const toolBlock = contentBlocks.find(
+            (b) => b.type === "tool_use" && b.id === event.tool_use_id
+          ) as ToolCallContent | undefined;
+          if (toolBlock) {
+            toolBlock.isExecuting = true;
+            setStreamingBlocks([...contentBlocks]);
+          }
+        }
+
+        // Handle tool execution end
+        if (event.type === "tool_execution_end") {
+          const toolBlock = contentBlocks.find(
+            (b) => b.type === "tool_use" && b.id === event.tool_use_id
+          ) as ToolCallContent | undefined;
+          if (toolBlock) {
+            toolBlock.isExecuting = false;
+            toolBlock.result = event.result;
+            toolBlock.isError = event.is_error;
+            setStreamingBlocks([...contentBlocks]);
+          }
+        }
+
+        // Handle message_stop
         if (event.type === "message_stop") {
-          // Add the assistant message with accumulated content
-          const assistantMessage: MessageParam = {
+          // Clean up apiIndex from blocks before saving
+          const cleanedBlocks = contentBlocks.map(block => {
+            const { apiIndex, ...rest } = block as any;
+            return rest;
+          });
+
+          const assistantMessage: AssistantMsg = {
             role: "assistant",
-            content: streamingText || "",
+            content: cleanedBlocks,
           };
 
-          setMessagesWithTools((prev) => {
-            const updated = [
-              ...prev,
-              {
-                message: assistantMessage,
-                toolInvocations: toolInvocations,
-              },
-            ];
+          setMessages((prev) => {
+            const updated = [...prev, assistantMessage];
 
-            // Save chat
             const title = chatTitle || value.slice(0, 50);
             setChatTitle(title);
+
+            // Convert to Anthropic MessageParam format for saving
+            const paramsToSave: MessageParam[] = updated.map(msg => {
+              if (msg.role === "user") {
+                return { role: "user", content: msg.content };
+              } else {
+                // Convert content blocks back to strings for simple storage
+                const textContent = msg.content
+                  .filter(b => b.type === "text")
+                  .map(b => (b as TextContent).text)
+                  .join("\n");
+                return { role: "assistant", content: textContent };
+              }
+            });
+
             saveChat({
               id: chatId,
               title: title,
-              messages: updated.map((m) => m.message),
+              messages: paramsToSave,
             });
 
             return updated;
           });
 
-          // Clear streaming state
-          setStreamingContent("");
-          setCurrentToolInvocations([]);
+          setStreamingBlocks([]);
           setIsStreaming(false);
+
+          // Send notification when agent completes
+          notifier.notify({
+            title: "Phi",
+            message: "Agent response complete",
+            sound: false,
+            wait: false,
+          });
         }
       }
     } catch (error) {
       console.error("Error streaming response:", error);
-      const errorMessage: MessageParam = {
+      const errorMessage: AssistantMsg = {
         role: "assistant",
-        content: "Error: " + (error as Error).message,
+        content: [{ type: "text", text: "Error: " + (error as Error).message }],
       };
-      setMessagesWithTools((prev) => [...prev, { message: errorMessage, toolInvocations: [] }]);
-      setCurrentToolInvocations([]);
+      setMessages((prev) => [...prev, errorMessage]);
+      setStreamingBlocks([]);
+
+      // Notify on error too
+      notifier.notify({
+        title: "Phi",
+        message: "Error occurred",
+        sound: false,
+        wait: false,
+      });
     } finally {
       setIsStreaming(false);
     }
   };
 
-  const handleSelectorChange = async (index: number, option: SelectOption | undefined) => {
+  const handleSelectorChange = async (index: number, option: SelectOption | null) => {
     if (!option || !selectorMode) return;
 
     if (selectorMode === "load") {
       try {
         const chat = await getChat(option.value as string);
         setChatId(chat.id);
-        setMessagesWithTools(chat.messages.map((m) => ({ message: m, toolInvocations: [] })));
+        // Convert loaded messages to our format
+        setMessages(chat.messages.map((m) => {
+          if (m.role === "user") {
+            return { role: "user", content: typeof m.content === "string" ? m.content : "" };
+          } else {
+            return {
+              role: "assistant",
+              content: [{ type: "text", text: typeof m.content === "string" ? m.content : "" }],
+            };
+          }
+        }));
         setChatTitle(chat.title);
       } catch (error) {
-        setMessagesWithTools([
+        setMessages([
           {
-            message: { role: "assistant", content: `Error loading chat: ${(error as Error).message}` },
-            toolInvocations: [],
+            role: "assistant",
+            content: [{ type: "text", text: `Error loading chat: ${(error as Error).message}` }],
           },
         ]);
       }
     } else if (selectorMode === "delete") {
       try {
         await deleteChat(option.value as string);
-        setMessagesWithTools((prev) => [
+        setMessages((prev) => [
           ...prev,
           {
-            message: { role: "assistant", content: `Deleted chat: ${option.name}` },
-            toolInvocations: [],
+            role: "assistant",
+            content: [{ type: "text", text: `Deleted chat: ${option.name}` }],
           },
         ]);
       } catch (error) {
-        setMessagesWithTools((prev) => [
+        setMessages((prev) => [
           ...prev,
           {
-            message: { role: "assistant", content: `Error deleting chat: ${(error as Error).message}` },
-            toolInvocations: [],
+            role: "assistant",
+            content: [{ type: "text", text: `Error deleting chat: ${(error as Error).message}` }],
           },
         ]);
       }
@@ -445,160 +434,253 @@ const App = () => {
       style={{
         flexDirection: "column",
         height: "100%",
-        alignItems: "center",
-        padding: 1,
+        width: "100%",
       }}
     >
+      {/* Main content area */}
       <box
         style={{
           flexDirection: "column",
-          width: "70%",
-          height: "100%",
+          flexGrow: 1,
+          alignItems: "center",
+          paddingTop: 1,
+          paddingLeft: 2,
+          paddingRight: 2,
         }}
       >
-        {/* Header - Only show when no messages */}
-        {messagesWithTools.length === 0 && (
-          <box style={{ marginBottom: 1 }}>
-            <text fg="#00ff88">{phiAsciiArt}</text>
-          </box>
-        )}
-
-        {/* Messages - Scrollable */}
-        <scrollbox
-          focused={focusMode === "scroll" && !isStreaming && !showSelector}
+        <box
           style={{
-            flexGrow: 1,
-            rootOptions: {},
-            wrapperOptions: {},
-            viewportOptions: {},
-            contentOptions: {
-              flexDirection: "column",
-              gap: 1,
-            },
-            scrollbarOptions: {
-              showArrows: false,
-            },
+            flexDirection: "column",
+            width: "80%",
+            height: "100%",
           }}
         >
-          {messagesWithTools.map((item, idx) => {
-            const isUser = item.message.role === "user";
-            const content = typeof item.message.content === "string" ? item.message.content : "";
-            const hasToolUses = item.toolInvocations.length > 0;
-
-            return (
-              <box key={idx} style={{ flexDirection: "column" }}>
-                {isUser ? (
-                  <text>
-                    <span fg="#00ff88" bold>You</span>
-                    {": "}
-                    {content}
-                  </text>
-                ) : (
-                  <>
-                    {hasToolUses && item.toolInvocations.map((tool, toolIdx) => (
-                      <text key={`tool-${toolIdx}`}>
-                        <span fg="#888888">{getToolLabel(tool)}</span>
-                      </text>
-                    ))}
-                    {content && (
-                      <MarkdownText content={content} showPrefix />
-                    )}
-                  </>
-                )}
-              </box>
-            );
-          })}
-
-          {/* Display current tool invocations while streaming */}
-          {isStreaming && currentToolInvocations.length > 0 && currentToolInvocations.map((tool, toolIdx) => (
-            <text key={`streaming-tool-${toolIdx}`}>
-              <span fg="#FFA500">{getToolLabel(tool)}</span>
-            </text>
-          ))}
-
-          {isStreaming && !streamingContent && !currentToolUse && (
-            <box>
-              <LoadingSpinner />
+          {/* Header - Only show when no messages */}
+          {messages.length === 0 && (
+            <box style={{ marginBottom: 1, alignItems: "center" }}>
+              <text fg={COLORS.accent}>{phiAsciiArt}</text>
             </box>
           )}
 
-          {isStreaming && streamingContent && (
-            <MarkdownText content={streamingContent} showPrefix />
-          )}
-        </scrollbox>
+          {/* Messages - Scrollable */}
+          <scrollbox
+            ref={scrollRef}
+            focused={focusMode === "scroll" && !isStreaming && !showSelector}
+            style={{
+              flexGrow: 1,
+              rootOptions: {},
+              wrapperOptions: {},
+              viewportOptions: {},
+              contentOptions: {
+                flexDirection: "column",
+                gap: 1,
+              },
+              scrollbarOptions: {
+                showArrows: false,
+              },
+            }}
+          >
+            {/* Render completed messages */}
+            {messages.map((msg, idx) => {
+              if (msg.role === "user") {
+                return <UserMessage key={idx} content={msg.content} isFirst={idx === 0} />;
+              } else {
+                // Assistant message - render content blocks in order
+                return (
+                  <box key={idx} style={{ flexDirection: "column" }}>
+                    {msg.content.map((block, blockIdx) => (
+                      <ContentBlockComponent key={blockIdx} block={block} />
+                    ))}
+                  </box>
+                );
+              }
+            })}
 
-        {/* Selector */}
-        {showSelector && chatOptions.length > 0 && (
+            {/* Render streaming content blocks */}
+            {isStreaming && streamingBlocks.length > 0 && (
+              <box style={{ flexDirection: "column" }}>
+                {streamingBlocks.map((block, blockIdx) => (
+                  <ContentBlockComponent key={blockIdx} block={block} />
+                ))}
+              </box>
+            )}
+
+            {/* Show loading spinner when waiting for first content */}
+            {isStreaming && streamingBlocks.length === 0 && (
+              <box style={{ marginTop: 1 }}>
+                <LoadingSpinner />
+              </box>
+            )}
+          </scrollbox>
+
+          {/* Selector */}
+          {showSelector && chatOptions.length > 0 && (
+            <box
+              style={{
+                border: true,
+                borderStyle: "rounded",
+                borderColor: COLORS.accent,
+                height: Math.min(chatOptions.length + 2, 12),
+                marginBottom: 1,
+              }}
+            >
+              <select
+                options={chatOptions}
+                focused={true}
+                onChange={handleSelectorChange}
+                showScrollIndicator={chatOptions.length > 10}
+                style={{
+                  flexGrow: 1,
+                }}
+              />
+            </box>
+          )}
+
+          {/* Input */}
           <box
             style={{
               border: true,
               borderStyle: "rounded",
-              borderColor: "#00ff88",
-              height: Math.min(chatOptions.length + 2, 12),
-              marginBottom: 1,
+              borderColor: focusMode === "input" ? COLORS.accent : COLORS.muted,
+              height: 3,
+              padding: 0,
             }}
           >
-            <select
-              options={chatOptions}
-              focused={true}
-              onChange={handleSelectorChange}
-              showScrollIndicator={chatOptions.length > 10}
-              style={{
-                flexGrow: 1,
-              }}
+            <input
+              placeholder="Ask me anything..."
+              focused={focusMode === "input" && !isStreaming && !showSelector}
+              value={inputValue}
+              onInput={setInputValue}
+              onSubmit={handleSubmit}
+              disabled={isStreaming || showSelector}
             />
           </box>
-        )}
-
-        {/* Input */}
-        <box
-          style={{
-            border: true,
-            borderStyle: "rounded",
-            borderColor: "#00ff88",
-            height: 3,
-            padding: 0,
-          }}
-        >
-          <input
-            placeholder="Something magical..."
-            focused={focusMode === "input" && !isStreaming && !showSelector}
-            value={inputValue}
-            onInput={setInputValue}
-            onSubmit={handleSubmit}
-            disabled={isStreaming || showSelector}
-            style={{
-              fg: "#ffffff",
-            }}
-          />
         </box>
       </box>
+
+      {/* Status bar */}
+      <StatusBar
+        isStreaming={isStreaming}
+        focusMode={focusMode}
+        messageCount={messages.length}
+      />
     </box>
   );
 };
 
+// Helper to prompt for input
+const prompt = async (question: string): Promise<string> => {
+  const readline = await import("node:readline");
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+
+  return new Promise((resolve) => {
+    rl.question(question, (answer) => {
+      rl.close();
+      resolve(answer.trim());
+    });
+  });
+};
+
+// Prompt for Anthropic token
+const promptForToken = async (): Promise<string> => {
+  console.log("\n\x1b[36m" + phiAsciiArt + "\x1b[0m\n");
+  console.log("Welcome to Phi! Let's get you set up.\n");
+  console.log("To get your Anthropic API key:");
+  console.log("  1. Go to https://console.anthropic.com/");
+  console.log("  2. Sign in or create an account");
+  console.log("  3. Go to API Keys and create a new key\n");
+
+  return await prompt("Enter your Anthropic API key: ");
+};
+
+// Prompt for Tavily API key (optional)
+const promptForTavilyKey = async (): Promise<string> => {
+  console.log("\n\x1b[36m[Optional]\x1b[0m Web search requires a Tavily API key.");
+  console.log("To get one:");
+  console.log("  1. Go to https://tavily.com/");
+  console.log("  2. Sign up for a free account");
+  console.log("  3. Copy your API key\n");
+  console.log("Press Enter to skip if you don't need web search.\n");
+
+  return await prompt("Enter your Tavily API key (or press Enter to skip): ");
+};
+
 // Main Loop
 const main = async () => {
-  const authenticated = await check();
+  let token = await check();
+  let isFirstRun = false;
 
-  if (!authenticated) {
-    console.error("Environment variable not set.");
-    process.exit(1);
+  if (!token) {
+    isFirstRun = true;
+    token = await promptForToken();
+
+    if (!token) {
+      console.error("\nNo token provided. Exiting.");
+      process.exit(1);
+    }
+
+    // Validate token by trying to create a client
+    try {
+      const testClient = new Anthropic({
+        apiKey: token,
+        dangerouslyAllowBrowser: true,
+      });
+      // Quick validation - just check that the client can be created
+      // A real validation would make an API call, but that costs money
+    } catch (error) {
+      console.error("\nInvalid token format. Please try again.");
+      process.exit(1);
+    }
+
+    // Save the token
+    await saveToken(token);
+    console.log("\n\x1b[36m✓\x1b[0m Anthropic API key saved to ~/.phi/config.json");
+  }
+
+  // Check for Tavily key on first run
+  if (isFirstRun) {
+    const tavilyKey = await promptForTavilyKey();
+    if (tavilyKey) {
+      await saveTavilyKey(tavilyKey);
+      console.log("\x1b[36m✓\x1b[0m Tavily API key saved to ~/.phi/config.json");
+    } else {
+      console.log("\x1b[36m⚠\x1b[0m Skipped Tavily setup. Web search will be unavailable.");
+    }
+    console.log("");
   }
 
   // Ensure chats directory exists
   await ensureChatsDir();
 
+  // Detect OAuth token (starts with sk-ant-oat)
+  const isOAuthToken = token.includes("sk-ant-oat");
+
   const defaultHeaders = {
     accept: "application/json",
     "anthropic-dangerous-direct-browser-access": "true",
-    "anthropic-beta": "oauth-2025-04-20,fine-grained-tool-streaming-2025-05-14",
+    "anthropic-beta": isOAuthToken
+      ? "oauth-2025-04-20,fine-grained-tool-streaming-2025-05-14"
+      : "fine-grained-tool-streaming-2025-05-14",
   };
 
-  client = new Anthropic({
-    defaultHeaders,
-    dangerouslyAllowBrowser: true,
-  });
+  // Create Anthropic client with appropriate authentication
+  if (isOAuthToken) {
+    client = new Anthropic({
+      apiKey: null as any,
+      authToken: token,
+      defaultHeaders,
+      dangerouslyAllowBrowser: true,
+    });
+  } else {
+    client = new Anthropic({
+      apiKey: token,
+      defaultHeaders,
+      dangerouslyAllowBrowser: true,
+    });
+  }
 
   const renderer = await createCliRenderer();
   createRoot(renderer).render(<App />);

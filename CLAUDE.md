@@ -43,7 +43,14 @@ The application requires `ANTHROPIC_AUTH_TOKEN` environment variable. Run `claud
 - **src/tools/**: Claude tool definitions
   - Tools use `betaZodTool` from Anthropic SDK
   - Input schemas defined with Zod
-  - Currently includes web search tool (stub implementation)
+  - **web-search**: Tavily-powered web search integration
+  - **todo**: In-memory task tracking during conversations
+    - Supports: create, add, complete, uncomplete, remove, get, list_all
+    - For any task requiring significant effort, agent should create a todo list
+    - Todo lists only exist during the current conversation (not persisted)
+  - **file tools**: read-file, write-file, edit-file for file operations
+  - **search tools**: glob (file patterns), grep (content search)
+  - **bash**: Execute shell commands
 
 ### Data Flow
 

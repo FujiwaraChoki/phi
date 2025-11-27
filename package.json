@@ -1,9 +1,15 @@
 {
   "name": "phi",
+  "version": "0.1.0",
   "type": "module",
   "private": true,
+  "bin": {
+    "phi": "./dist/phi"
+  },
   "scripts": {
-    "start": "bun run src/index.tsx"
+    "start": "bun run src/index.tsx",
+    "build": "bun build src/index.tsx --compile --outfile dist/phi",
+    "package": "bun run build && bun link"
   },
   "devDependencies": {
     "@types/bun": "latest"
@@ -17,6 +23,7 @@
     "@opentui/react": "^0.1.44",
     "@tavily/core": "^0.5.13",
     "cli-spinners": "^3.3.0",
+    "node-notifier": "^10.0.1",
     "react": "^19.2.0",
     "zod": "^4.1.12"
   }

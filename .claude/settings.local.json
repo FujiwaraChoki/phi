@@ -5,7 +5,12 @@
       "WebFetch(domain:github.com)",
       "Bash(bun run:*)",
       "Bash(echo:*)",
-      "Bash(timeout 5 bun run start:*)"
+      "Bash(timeout 5 bun run start:*)",
+      "WebSearch",
+      "Bash(bun build:*)",
+      "Bash(bun:*)",
+      "Bash(timeout 10 bun run start:*)",
+      "Bash(timeout 2 bun run start:*)"
     ],
     "deny": [],
     "ask": []

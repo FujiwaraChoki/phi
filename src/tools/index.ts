@@ -6,6 +6,7 @@ import editFileTool from "./edit-file";
 import bashTool from "./bash";
 import globTool from "./glob";
 import grepTool from "./grep";
+import todoTool from "./todo";
 
 // All available tools
 export const allTools = [
@@ -16,6 +17,7 @@ export const allTools = [
   globTool,
   grepTool,
   webSearchTool,
+  todoTool,
 ];
 
 // Tool map for looking up tools by name
@@ -27,6 +29,7 @@ export const toolMap = {
   [globTool.name]: globTool.run,
   [grepTool.name]: grepTool.run,
   [webSearchTool.name]: webSearchTool.run,
+  [todoTool.name]: todoTool.run,
 };
 
 // Individual exports
@@ -39,4 +42,5 @@ export {
   bashTool,
   globTool,
   grepTool,
+  todoTool,
 };

@@ -1,14 +1,22 @@
 import { z } from "zod";
 import { betaZodTool } from "@anthropic-ai/sdk/helpers/beta/zod.js";
 import { tavily, type TavilyClient } from "@tavily/core";
+import { getTavilyKey } from "../local-data";
 
 // Lazily initialize Tavily client
 let tavilyClient: TavilyClient | null = null;
+let cachedApiKey: string | null = null;
 
-function getTavilyClient(): TavilyClient | null {
-  if (tavilyClient) return tavilyClient;
-  const apiKey = process.env.TAVILY_API_KEY;
+async function getTavilyClient(): Promise<TavilyClient | null> {
+  const apiKey = await getTavilyKey();
   if (!apiKey) return null;
+
+  // Return cached client if key hasn't changed
+  if (tavilyClient && cachedApiKey === apiKey) {
+    return tavilyClient;
+  }
+
+  cachedApiKey = apiKey;
   tavilyClient = tavily({ apiKey });
   return tavilyClient;
 }
@@ -24,9 +32,9 @@ const webSearchTool = betaZodTool({
   run: async (input) => {
     const { query, maxResults = 5, searchDepth = "basic" } = input;
 
-    const client = getTavilyClient();
+    const client = await getTavilyClient();
     if (!client) {
-      return "Error: Web search is not available. Please set the TAVILY_API_KEY environment variable.";
+      return "Error: Web search is not available. No Tavily API key configured. You can add one by editing ~/.phi/config.json";
     }
 
     try {
