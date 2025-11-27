@@ -1,11 +1,17 @@
 import { z } from "zod";
 import { betaZodTool } from "@anthropic-ai/sdk/helpers/beta/zod.js";
-import { tavily } from "@tavily/core";
+import { tavily, type TavilyClient } from "@tavily/core";
 
-// Initialize Tavily client
-const tavilyClient = tavily({
-  apiKey: process.env.TAVILY_API_KEY,
-});
+// Lazily initialize Tavily client
+let tavilyClient: TavilyClient | null = null;
+
+function getTavilyClient(): TavilyClient | null {
+  if (tavilyClient) return tavilyClient;
+  const apiKey = process.env.TAVILY_API_KEY;
+  if (!apiKey) return null;
+  tavilyClient = tavily({ apiKey });
+  return tavilyClient;
+}
 
 const webSearchTool = betaZodTool({
   name: "web_search",

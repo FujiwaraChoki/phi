@@ -10,8 +10,56 @@ import type { MessageParam } from "@anthropic-ai/sdk/resources";
 import type { SelectOption } from "@opentui/core";
 import type { ToolUseBlock } from "@anthropic-ai/sdk/resources/messages";
 import spinners from "cli-spinners";
+import { homedir } from "node:os";
 
 const phiAsciiArt = await getAsciiArt("phi");
+
+// Tool icons for different operations
+const TOOL_ICONS: Record<string, string> = {
+  read_file: "📖",
+  write_file: "✏️",
+  edit_file: "🔧",
+  bash: "💻",
+  glob: "🔍",
+  grep: "🔎",
+  web_search: "🌐",
+  file_search: "📁",
+};
+
+// Abbreviate home directory in paths
+function abbreviatePath(filePath: string): string {
+  const home = homedir();
+  if (filePath.startsWith(home)) {
+    return "~" + filePath.slice(home.length);
+  }
+  return filePath;
+}
+
+// Get a display label for a tool invocation
+function getToolLabel(tool: ToolUseBlock): string {
+  const input = tool.input as Record<string, unknown>;
+  const icon = TOOL_ICONS[tool.name] || "🔧";
+
+  switch (tool.name) {
+    case "read_file":
+      return `${icon} Reading ${abbreviatePath(String(input.path || ""))}`;
+    case "write_file":
+      return `${icon} Writing ${abbreviatePath(String(input.path || ""))}`;
+    case "edit_file":
+      return `${icon} Editing ${abbreviatePath(String(input.path || ""))}`;
+    case "bash":
+      const cmd = String(input.command || "").slice(0, 50);
+      return `${icon} ${cmd}${String(input.command || "").length > 50 ? "..." : ""}`;
+    case "glob":
+      return `${icon} Finding ${String(input.pattern || "")}`;
+    case "grep":
+      return `${icon} Searching for "${String(input.pattern || "").slice(0, 30)}"`;
+    case "web_search":
+      return `${icon} Searching: ${String(input.query || "").slice(0, 40)}`;
+    default:
+      return `${icon} ${tool.name}`;
+  }
+}
 
 let client: Anthropic;
 
@@ -447,19 +495,11 @@ const App = () => {
                   </text>
                 ) : (
                   <>
-                    {hasToolUses && (
-                      <text>
-                        <span fg="#FFA500">🔍 </span>
-                        <span fg="#888888">
-                          {item.toolInvocations[0].name}
-                          {item.toolInvocations[0].input &&
-                          typeof item.toolInvocations[0].input === "object" &&
-                          "query" in item.toolInvocations[0].input
-                            ? `: "${(item.toolInvocations[0].input as { query: string }).query}"`
-                            : ""}
-                        </span>
+                    {hasToolUses && item.toolInvocations.map((tool, toolIdx) => (
+                      <text key={`tool-${toolIdx}`}>
+                        <span fg="#888888">{getToolLabel(tool)}</span>
                       </text>
-                    )}
+                    ))}
                     {content && (
                       <MarkdownText content={content} showPrefix />
                     )}
@@ -470,19 +510,11 @@ const App = () => {
           })}
 
           {/* Display current tool invocations while streaming */}
-          {isStreaming && currentToolInvocations.length > 0 && (
-            <text>
-              <span fg="#FFA500">🔍 </span>
-              <span fg="#888888">
-                {currentToolInvocations[0].name}
-                {currentToolInvocations[0].input &&
-                typeof currentToolInvocations[0].input === "object" &&
-                "query" in currentToolInvocations[0].input
-                  ? `: "${(currentToolInvocations[0].input as { query: string }).query}"`
-                  : ""}
-              </span>
+          {isStreaming && currentToolInvocations.length > 0 && currentToolInvocations.map((tool, toolIdx) => (
+            <text key={`streaming-tool-${toolIdx}`}>
+              <span fg="#FFA500">{getToolLabel(tool)}</span>
             </text>
-          )}
+          ))}
 
           {isStreaming && !streamingContent && !currentToolUse && (
             <box>
