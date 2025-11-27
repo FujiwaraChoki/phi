@@ -4,7 +4,8 @@
       "WebFetch(domain:raw.githubusercontent.com)",
       "WebFetch(domain:github.com)",
       "Bash(bun run:*)",
-      "Bash(echo:*)"
+      "Bash(echo:*)",
+      "Bash(timeout 5 bun run start:*)"
     ],
     "deny": [],
     "ask": []

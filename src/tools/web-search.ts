@@ -24,8 +24,13 @@ const webSearchTool = betaZodTool({
   run: async (input) => {
     const { query, maxResults = 5, searchDepth = "basic" } = input;
 
+    const client = getTavilyClient();
+    if (!client) {
+      return "Error: Web search is not available. Please set the TAVILY_API_KEY environment variable.";
+    }
+
     try {
-      const response = await tavilyClient.search(query, {
+      const response = await client.search(query, {
         searchDepth,
         maxResults,
         includeAnswer: true,
